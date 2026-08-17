@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "finmodel"
+version = "0.1.0"
+description = "Build financial statements from declarative table specs with a safe formula evaluator."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Shipmind Labs", email = "hello@shipmindlabs.com" }]
+keywords = ["finance", "financial-statements", "modeling", "formula", "spreadsheet"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Accounting",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/shipmindlabs/finmodel"
+Source = "https://github.com/shipmindlabs/finmodel"
+Issues = "https://github.com/shipmindlabs/finmodel/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/finmodel"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/finmodel", "README.md", "LICENSE"]
