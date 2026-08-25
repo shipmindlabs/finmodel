@@ -7,6 +7,8 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Union
 
+from finmodel.formula import Expr, FormulaError, parse
+
 __all__ = [
     "Block",
     "ComputedLine",
@@ -24,17 +26,11 @@ class SpecError(ValueError):
 
 
 _ID_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
-_NAME_RE = re.compile(r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<call>\()?")
 
 
 def formula_references(formula: str) -> tuple[str, ...]:
     """Return the line ids read by a formula, in order of first appearance."""
-    # A name directly followed by "(" is a function call, not a line reference.
-    seen: dict[str, None] = {}
-    for match in _NAME_RE.finditer(formula):
-        if match.group("call") is None:
-            seen.setdefault(match.group("name"), None)
-    return tuple(seen)
+    return parse(formula).references
 
 
 def _validate_id(value: str, kind: str) -> None:
@@ -71,13 +67,19 @@ class ComputedLine(Line):
     """A row whose values are derived from other lines through a formula."""
 
     formula: str = ""
+    expression: Expr = field(init=False, repr=False, compare=False)
     references: tuple[str, ...] = field(init=False, default=(), compare=False)
 
     def __post_init__(self) -> None:
         super().__post_init__()
         if not self.formula.strip():
             raise SpecError(f"computed line {self.id!r} must have a formula")
-        object.__setattr__(self, "references", formula_references(self.formula))
+        try:
+            expression = parse(self.formula)
+        except FormulaError as exc:
+            raise SpecError(f"formula of {self.id!r} is invalid: {exc}") from exc
+        object.__setattr__(self, "expression", expression)
+        object.__setattr__(self, "references", expression.references)
 
 
 @dataclass(frozen=True)

@@ -5,8 +5,8 @@ balance sheet, with a safe formula evaluator instead of `eval()`.
 
 ## Status
 
-Pre-alpha. Statements can be declared and validated; evaluation and rendering
-are not implemented yet.
+Pre-alpha. Statements can be declared and validated and formulas parse and
+evaluate; period values and rendering are not implemented yet.
 
 ## Installation
 
@@ -18,7 +18,8 @@ pip install finmodel
 
 A statement is data: blocks group categories, input lines carry values and
 computed lines derive them from a formula. Building a `Statement` validates the
-whole tree — identifiers, duplicates, unknown references and reference cycles.
+whole tree — identifiers, duplicates, formula syntax, unknown references and
+reference cycles.
 
 ```python
 from finmodel import Block, ComputedLine, InputLine, Statement
@@ -59,6 +60,39 @@ pnl.evaluation_order
 for node, depth in pnl.walk():
     print("  " * depth + node.label)
 ```
+
+## Formulas
+
+Formulas are never handed to `eval()`. A formula is tokenised and parsed into a
+small expression tree — line references, decimal literals, `+ - * /`, a unary
+sign and parentheses — and then evaluated over an explicit scope. Anything
+outside that grammar (calls, attribute access, comparisons) is a parse error,
+and a name that the scope does not bind is an evaluation error. Arithmetic uses
+`Decimal`, so amounts keep their scale.
+
+```python
+from decimal import Decimal
+from finmodel import evaluate, parse
+
+expression = parse("(product_sales + services) * 0.9 - cogs")
+expression.references
+# ('product_sales', 'services', 'cogs')
+
+expression.evaluate(
+    {
+        "product_sales": Decimal("1200"),
+        "services": Decimal("300"),
+        "cogs": Decimal("450"),
+    }
+)
+# Decimal('900.0')
+
+evaluate("margin / periods", {"margin": Decimal("90"), "periods": Decimal("0")})
+# FormulaError: division by zero
+```
+
+Every `ComputedLine` exposes its parsed tree as `line.expression`, so a
+statement is parsed once at construction and evaluated many times.
 
 ## Development
 
