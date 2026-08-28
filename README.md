@@ -61,6 +61,40 @@ for node, depth in pnl.walk():
     print("  " * depth + node.label)
 ```
 
+## Evaluation order
+
+`evaluation_order` is a topological sort of the computed lines over the graph of
+their references, so a line always comes after everything it reads, whatever
+order the spec declares. `dependency_graph` exposes the same edges, keyed by
+line id. The sort keeps its own stack, so a deep chain of lines is ordered
+instead of hitting the recursion limit.
+
+A cycle is a `CircularReferenceError` — a named error carrying the path that
+closes the loop, not a stack overflow three layers down.
+
+```python
+from finmodel import CircularReferenceError, ComputedLine, InputLine, Statement
+
+try:
+    Statement(
+        id="broken",
+        label="Broken",
+        children=[
+            ComputedLine(id="ebit", label="EBIT", formula="ebitda - depreciation"),
+            ComputedLine(id="ebitda", label="EBITDA", formula="ebit + depreciation"),
+            InputLine(id="depreciation", label="Depreciation"),
+        ],
+    )
+except CircularReferenceError as error:
+    print(error)
+    # circular reference: ebit -> ebitda -> ebit
+    error.cycle
+    # ('ebit', 'ebitda', 'ebit')
+```
+
+`CircularReferenceError` is a `SpecError`, so callers that only care about an
+invalid spec can keep catching the base class.
+
 ## Formulas
 
 Formulas are never handed to `eval()`. A formula is tokenised and parsed into a

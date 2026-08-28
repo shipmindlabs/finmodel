@@ -11,6 +11,7 @@ from finmodel.formula import Expr, FormulaError, parse
 
 __all__ = [
     "Block",
+    "CircularReferenceError",
     "ComputedLine",
     "InputLine",
     "Line",
@@ -23,6 +24,14 @@ __all__ = [
 
 class SpecError(ValueError):
     """Raised when a statement spec is structurally invalid."""
+
+
+class CircularReferenceError(SpecError):
+    """Raised when computed lines depend on one another in a cycle."""
+
+    def __init__(self, cycle: Sequence[str]) -> None:
+        self.cycle = tuple(cycle)
+        super().__init__("circular reference: " + " -> ".join(self.cycle))
 
 
 _ID_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
@@ -155,6 +164,11 @@ class Statement:
         """Ids of the computed lines, dependencies first."""
         return self._order
 
+    @property
+    def dependency_graph(self) -> dict[str, tuple[str, ...]]:
+        """Direct dependencies of every line, keyed by line id."""
+        return {line_id: _dependencies(self._lines, line_id) for line_id in self._lines}
+
     def line(self, line_id: str) -> Line:
         try:
             return self._lines[line_id]
@@ -190,26 +204,43 @@ def _validate_references(blocks: dict[str, Block], lines: dict[str, Line]) -> No
             raise SpecError(f"line {line.id!r} references unknown line {ref!r}")
 
 
+def _dependencies(lines: dict[str, Line], line_id: str) -> tuple[str, ...]:
+    line = lines[line_id]
+    return line.references if isinstance(line, ComputedLine) else ()
+
+
 def _evaluation_order(lines: dict[str, Line]) -> tuple[str, ...]:
+    """Topologically sort the computed lines over the graph of their references."""
+    # The walk keeps its own stack: a chain of thousands of lines is a data
+    # problem, not a reason to exhaust the interpreter stack.
     order: list[str] = []
     done: set[str] = set()
-    active: list[str] = []
 
-    def visit(line_id: str) -> None:
-        if line_id in done:
-            return
-        if line_id in active:
-            cycle = active[active.index(line_id) :] + [line_id]
-            raise SpecError("circular reference: " + " -> ".join(cycle))
-        line = lines[line_id]
-        if isinstance(line, ComputedLine):
-            active.append(line_id)
-            for ref in line.references:
-                visit(ref)
-            active.pop()
-            order.append(line_id)
-        done.add(line_id)
-
-    for line_id in lines:
-        visit(line_id)
+    for root in lines:
+        if root in done:
+            continue
+        path = [root]
+        active = {root}
+        stack = [(root, iter(_dependencies(lines, root)))]
+        while stack:
+            line_id, pending = stack[-1]
+            descended = False
+            for ref in pending:
+                if ref in done:
+                    continue
+                if ref in active:
+                    raise CircularReferenceError(path[path.index(ref) :] + [ref])
+                path.append(ref)
+                active.add(ref)
+                stack.append((ref, iter(_dependencies(lines, ref))))
+                descended = True
+                break
+            if descended:
+                continue
+            stack.pop()
+            path.pop()
+            active.discard(line_id)
+            done.add(line_id)
+            if isinstance(lines[line_id], ComputedLine):
+                order.append(line_id)
     return tuple(order)

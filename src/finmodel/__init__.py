@@ -12,6 +12,7 @@ from finmodel.formula import (
 )
 from finmodel.spec import (
     Block,
+    CircularReferenceError,
     ComputedLine,
     InputLine,
     Line,
@@ -24,6 +25,7 @@ from finmodel.spec import (
 __all__ = [
     "BinaryOp",
     "Block",
+    "CircularReferenceError",
     "ComputedLine",
     "Expr",
     "FormulaError",
