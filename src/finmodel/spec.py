@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Union
 
-from finmodel.formula import Expr, FormulaError, parse
+from finmodel.formula import (
+    Amount,
+    Expr,
+    FormulaError,
+    Rounding,
+    Value,
+    parse,
+    to_amount,
+)
 
 __all__ = [
     "Block",
@@ -58,6 +66,7 @@ class Line:
 
     id: str
     label: str
+    rounding: Rounding | None = None
 
     def __post_init__(self) -> None:
         _validate_id(self.id, "line")
@@ -127,6 +136,7 @@ class Statement:
     id: str
     label: str
     children: Sequence[Node] = ()
+    rounding: Rounding | None = None
     _lines: dict[str, Line] = field(
         init=False, repr=False, compare=False, default_factory=dict
     )
@@ -174,6 +184,38 @@ class Statement:
             return self._lines[line_id]
         except KeyError:
             raise SpecError(f"unknown line {line_id!r}") from None
+
+    def rounding_of(self, line_id: str) -> Rounding | None:
+        """The rounding a line states, or the statement default it falls back to."""
+        line = self.line(line_id)
+        return line.rounding if line.rounding is not None else self.rounding
+
+    def evaluate(self, values: Mapping[str, Value]) -> dict[str, Amount]:
+        """Compute one period: input amounts in, every line rounded to its scale.
+
+        A line that cannot be computed, such as a ratio over zero revenue, holds a
+        `NotApplicable` that the lines reading it carry forward unchanged.
+        """
+        scope: dict[str, Amount] = {}
+        for line in self.input_lines:
+            if line.id not in values:
+                raise SpecError(f"no value for input line {line.id!r}")
+            scope[line.id] = self._round(line, values[line.id])
+        unknown = sorted(set(values) - set(scope))
+        if unknown:
+            raise SpecError(
+                "values given for lines that take none: " + ", ".join(unknown)
+            )
+        computed = {line.id: line for line in self.computed_lines}
+        for line_id in self._order:
+            line = computed[line_id]
+            scope[line_id] = self._round(line, line.expression.evaluate(scope))
+        return {line_id: scope[line_id] for line_id in self._lines}
+
+    def _round(self, line: Line, value: Value) -> Amount:
+        rounding = line.rounding if line.rounding is not None else self.rounding
+        amount = to_amount(value, line.id)
+        return rounding.apply(amount) if rounding is not None else amount
 
 
 def _index(children: Sequence[Node]) -> tuple[dict[str, Block], dict[str, Line]]:

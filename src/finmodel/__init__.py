@@ -1,12 +1,17 @@
 """Build financial statements from declarative table specs."""
 
 from finmodel.formula import (
+    NA,
+    Amount,
     BinaryOp,
     Expr,
     FormulaError,
+    NotApplicable,
     Number,
     Reference,
+    Rounding,
     UnaryOp,
+    Value,
     evaluate,
     parse,
 )
@@ -23,6 +28,8 @@ from finmodel.spec import (
 )
 
 __all__ = [
+    "NA",
+    "Amount",
     "BinaryOp",
     "Block",
     "CircularReferenceError",
@@ -32,11 +39,14 @@ __all__ = [
     "InputLine",
     "Line",
     "Node",
+    "NotApplicable",
     "Number",
     "Reference",
+    "Rounding",
     "SpecError",
     "Statement",
     "UnaryOp",
+    "Value",
     "__version__",
     "evaluate",
     "formula_references",

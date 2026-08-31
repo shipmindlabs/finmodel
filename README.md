@@ -5,8 +5,9 @@ balance sheet, with a safe formula evaluator instead of `eval()`.
 
 ## Status
 
-Pre-alpha. Statements can be declared and validated and formulas parse and
-evaluate; period values and rendering are not implemented yet.
+Pre-alpha. Statements can be declared and validated, formulas parse and
+evaluate, and a single period can be computed with per-line rounding; multiple
+periods and rendering are not implemented yet.
 
 ## Installation
 
@@ -101,8 +102,7 @@ Formulas are never handed to `eval()`. A formula is tokenised and parsed into a
 small expression tree — line references, decimal literals, `+ - * /`, a unary
 sign and parentheses — and then evaluated over an explicit scope. Anything
 outside that grammar (calls, attribute access, comparisons) is a parse error,
-and a name that the scope does not bind is an evaluation error. Arithmetic uses
-`Decimal`, so amounts keep their scale.
+and a name that the scope does not bind is an evaluation error.
 
 ```python
 from decimal import Decimal
@@ -120,13 +120,73 @@ expression.evaluate(
     }
 )
 # Decimal('900.0')
-
-evaluate("margin / periods", {"margin": Decimal("90"), "periods": Decimal("0")})
-# FormulaError: division by zero
 ```
 
 Every `ComputedLine` exposes its parsed tree as `line.expression`, so a
 statement is parsed once at construction and evaluated many times.
+
+## Money, rounding and division by zero
+
+Amounts are `Decimal` end to end. Integers, floats and strings handed in through
+a scope are converted exactly — a float through its shortest repr — so nothing
+reaches the arithmetic as binary floating point.
+
+Rounding is stated, never implicit. A `Rounding` carries a number of decimal
+places and a mode, defaulting to `ROUND_HALF_UP` rather than the banker's
+rounding of the `decimal` module. Lines state their own; a statement may state
+a default for the lines that do not. Negative digits round to units of ten.
+
+A division by zero is an answer, not a crash: it yields `NotApplicable`, which
+carries the reason and propagates through every line that reads it, so a period
+with no revenue reports margins as not applicable instead of raising three
+levels down.
+
+```python
+from decimal import Decimal
+from finmodel import Block, ComputedLine, InputLine, Rounding, Statement, evaluate
+
+evaluate("gross_profit / total_revenue", {"gross_profit": Decimal("90"), "total_revenue": Decimal("0")})
+# NotApplicable(reason='division by zero')
+
+pnl = Statement(
+    id="pnl",
+    label="Profit and loss",
+    rounding=Rounding(2),
+    children=[
+        Block(
+            id="revenue",
+            label="Revenue",
+            children=[InputLine(id="total_revenue", label="Total revenue")],
+        ),
+        InputLine(id="cogs", label="Cost of goods sold"),
+        ComputedLine(
+            id="gross_profit",
+            label="Gross profit",
+            formula="total_revenue - cogs",
+        ),
+        ComputedLine(
+            id="gross_margin",
+            label="Gross margin",
+            formula="gross_profit / total_revenue",
+            rounding=Rounding(4),
+        ),
+    ],
+)
+
+pnl.evaluate({"total_revenue": Decimal("1500"), "cogs": Decimal("449.995")})
+# {'total_revenue': Decimal('1500.00'),
+#  'cogs': Decimal('450.00'),
+#  'gross_profit': Decimal('1050.00'),
+#  'gross_margin': Decimal('0.7000')}
+
+result = pnl.evaluate({"total_revenue": Decimal("0"), "cogs": Decimal("120")})
+print(result["gross_margin"])
+# n/a (division by zero)
+```
+
+`evaluate` computes one period in dependency order and returns every line in
+declaration order. Missing or unexpected input values are a `SpecError`, so a
+period is either complete or refused.
 
 ## Development
 

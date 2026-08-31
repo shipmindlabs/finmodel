@@ -5,19 +5,35 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from decimal import Decimal, DecimalException
+from decimal import (
+    ROUND_CEILING,
+    ROUND_DOWN,
+    ROUND_FLOOR,
+    ROUND_HALF_DOWN,
+    ROUND_HALF_EVEN,
+    ROUND_HALF_UP,
+    ROUND_UP,
+    Decimal,
+    DecimalException,
+    InvalidOperation,
+)
 from typing import Union
 
 __all__ = [
+    "NA",
+    "Amount",
     "BinaryOp",
     "Expr",
     "FormulaError",
+    "NotApplicable",
     "Number",
     "Reference",
+    "Rounding",
     "UnaryOp",
     "Value",
     "evaluate",
     "parse",
+    "to_amount",
 ]
 
 
@@ -25,8 +41,76 @@ class FormulaError(ValueError):
     """Raised when a formula cannot be parsed or evaluated."""
 
 
-Value = Union[Decimal, int, float]
+@dataclass(frozen=True)
+class NotApplicable:
+    """An amount a line cannot have, carrying the reason it has none."""
+
+    reason: str = "division by zero"
+
+    def __str__(self) -> str:
+        return f"n/a ({self.reason})"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+NA = NotApplicable()
+
+Amount = Union[Decimal, NotApplicable]
+Value = Union[Decimal, NotApplicable, int, float, str]
 Scope = Mapping[str, Value]
+
+ROUNDING_MODES = (
+    ROUND_CEILING,
+    ROUND_DOWN,
+    ROUND_FLOOR,
+    ROUND_HALF_DOWN,
+    ROUND_HALF_EVEN,
+    ROUND_HALF_UP,
+    ROUND_UP,
+)
+
+
+@dataclass(frozen=True)
+class Rounding:
+    """A scale and a mode: how one line states its amounts."""
+
+    digits: int
+    mode: str = ROUND_HALF_UP
+
+    def __post_init__(self) -> None:
+        if self.mode not in ROUNDING_MODES:
+            raise FormulaError(f"unknown rounding mode {self.mode!r}")
+
+    @property
+    def exponent(self) -> Decimal:
+        """The quantum amounts are snapped to; negative digits round to units."""
+        return Decimal(1).scaleb(-self.digits)
+
+    def apply(self, amount: Amount) -> Amount:
+        """Quantize an amount, leaving a stated non-answer untouched."""
+        if isinstance(amount, NotApplicable):
+            return amount
+        try:
+            return amount.quantize(self.exponent, rounding=self.mode)
+        except InvalidOperation:
+            raise FormulaError(
+                f"cannot round {amount} to {self.digits} decimal places"
+            ) from None
+
+
+def to_amount(value: Value, name: str) -> Amount:
+    """Coerce a scope value to an exact amount, or to the non-answer it already is."""
+    if isinstance(value, (Decimal, NotApplicable)):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return Decimal(value)
+    if isinstance(value, (float, str)):
+        try:
+            return Decimal(str(value))
+        except DecimalException:
+            raise FormulaError(f"value of {name!r} is not a number: {value!r}") from None
+    raise FormulaError(f"value of {name!r} is not a number: {value!r}")
 
 
 @dataclass(frozen=True)
@@ -39,7 +123,7 @@ class Number:
     def references(self) -> tuple[str, ...]:
         return ()
 
-    def evaluate(self, scope: Scope) -> Decimal:
+    def evaluate(self, scope: Scope) -> Amount:
         return self.value
 
 
@@ -53,12 +137,12 @@ class Reference:
     def references(self) -> tuple[str, ...]:
         return (self.name,)
 
-    def evaluate(self, scope: Scope) -> Decimal:
+    def evaluate(self, scope: Scope) -> Amount:
         try:
             raw = scope[self.name]
         except KeyError:
             raise FormulaError(f"unbound reference {self.name!r}") from None
-        return _to_decimal(raw, self.name)
+        return to_amount(raw, self.name)
 
 
 @dataclass(frozen=True)
@@ -72,8 +156,10 @@ class UnaryOp:
     def references(self) -> tuple[str, ...]:
         return self.operand.references
 
-    def evaluate(self, scope: Scope) -> Decimal:
+    def evaluate(self, scope: Scope) -> Amount:
         value = self.operand.evaluate(scope)
+        if isinstance(value, NotApplicable):
+            return value
         return -value if self.op == "-" else value
 
 
@@ -89,9 +175,13 @@ class BinaryOp:
     def references(self) -> tuple[str, ...]:
         return _dedupe((*self.left.references, *self.right.references))
 
-    def evaluate(self, scope: Scope) -> Decimal:
+    def evaluate(self, scope: Scope) -> Amount:
         left = self.left.evaluate(scope)
+        if isinstance(left, NotApplicable):
+            return left
         right = self.right.evaluate(scope)
+        if isinstance(right, NotApplicable):
+            return right
         if self.op == "+":
             return left + right
         if self.op == "-":
@@ -99,7 +189,7 @@ class BinaryOp:
         if self.op == "*":
             return left * right
         if right == 0:
-            raise FormulaError("division by zero")
+            return NA
         return left / right
 
 
@@ -111,7 +201,7 @@ def parse(formula: str) -> Expr:
     return _Parser(_tokenize(formula)).parse()
 
 
-def evaluate(formula: Union[str, Expr], scope: Scope) -> Decimal:
+def evaluate(formula: Union[str, Expr], scope: Scope) -> Amount:
     """Evaluate a formula, or an already parsed expression, over a scope."""
     expression = parse(formula) if isinstance(formula, str) else formula
     return expression.evaluate(scope)
@@ -119,16 +209,6 @@ def evaluate(formula: Union[str, Expr], scope: Scope) -> Decimal:
 
 def _dedupe(names: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(names))
-
-
-def _to_decimal(value: Value, name: str) -> Decimal:
-    if isinstance(value, Decimal):
-        return value
-    if isinstance(value, int) and not isinstance(value, bool):
-        return Decimal(value)
-    if isinstance(value, float):
-        return Decimal(str(value))
-    raise FormulaError(f"value of {name!r} is not a number: {value!r}")
 
 
 @dataclass(frozen=True)
