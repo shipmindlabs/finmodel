@@ -6,8 +6,9 @@ balance sheet, with a safe formula evaluator instead of `eval()`.
 ## Status
 
 Pre-alpha. Statements can be declared and validated, formulas parse and
-evaluate, and a single period can be computed with per-line rounding; multiple
-periods and rendering are not implemented yet.
+evaluate, a single period computes with per-line rounding, and twelve months
+roll into quarters and a year with balances carried across the boundaries;
+rendering is not implemented yet.
 
 ## Installation
 
@@ -188,10 +189,84 @@ print(result["gross_margin"])
 declaration order. Missing or unexpected input values are a `SpecError`, so a
 period is either complete or refused.
 
+## Twelve months make a year
+
+A `Timeline` is one calendar year: twelve months, the four quarters over them
+and the year itself. A `PeriodicModel` pairs a statement with the balances that
+survive a period boundary, computes every month in order and rolls the longer
+spans up from the shorter ones.
+
+A flow sums over a span, a balance takes an edge of it: `Carry` names the
+opening line, the closing line that feeds the next period and the movement
+between them, and that alone settles how the three roll up. Computed lines are
+never summed — they are evaluated again over the rolled-up inputs, so the
+year's margin is the year's profit over the year's revenue and not twelve
+monthly ratios added together. Inputs that are neither flow nor balance, such
+as a headcount, state their own rollup.
+
+```python
+from decimal import Decimal
+from finmodel import (
+    Carry, ComputedLine, InputLine, PeriodicModel, Rounding, Statement, Timeline
+)
+
+cash = Statement(
+    id="cash",
+    label="Cash flow",
+    rounding=Rounding(2),
+    children=[
+        InputLine(id="opening_cash", label="Opening cash"),
+        InputLine(id="receipts", label="Receipts"),
+        InputLine(id="payments", label="Payments"),
+        ComputedLine(id="net_cash_flow", label="Net cash flow", formula="receipts - payments"),
+        ComputedLine(id="closing_cash", label="Closing cash", formula="opening_cash + net_cash_flow"),
+    ],
+)
+
+model = PeriodicModel(
+    cash,
+    carries=[Carry(opening="opening_cash", closing="closing_cash", movement="net_cash_flow")],
+)
+
+timeline = Timeline(2026)
+months = {
+    month.id: {"receipts": Decimal(100 * n), "payments": Decimal("40")}
+    for n, month in enumerate(timeline.months, start=1)
+}
+
+results = model.run(timeline, months, opening={"opening_cash": Decimal("1000")})
+
+results.amount("2026-Q1", "net_cash_flow")
+# Decimal('480.00')
+results.amount(timeline.full_year, "closing_cash")
+# Decimal('8320.00')
+results.row("closing_cash")["2026-01"]
+# Decimal('1060.00')
+```
+
+The opening balance of a month is never given: the first one comes from the
+`opening` mapping, every later one is the previous closing, and handing one in
+with the month's values is a `SpecError`.
+
+Stating a movement makes the identity checkable rather than assumed. Every
+period — each month, each quarter and the year — carries a `Proof` that opening
+plus movement is closing, and a period that fails it raises `IdentityError`
+with the proof attached instead of quietly reporting a balance that does not
+reconcile.
+
+```python
+print(results.proofs("2026")[0])
+# closing_cash over 2026: 1000.00 + 7320.00 = 8320.00 (holds)
+
+all(proof.ok for proof in results.proofs())
+# True
+```
+
 ## Development
 
 ```bash
-pip install -e .
+pip install -e ".[test]"
+python -m pytest
 ```
 
 ## License
