@@ -1,5 +1,6 @@
 """Build financial statements from declarative table specs."""
 
+from finmodel.checks import Check, CheckError, CheckResult, Checklist
 from finmodel.formula import (
     NA,
     Amount,
@@ -43,6 +44,10 @@ __all__ = [
     "BinaryOp",
     "Block",
     "Carry",
+    "Check",
+    "CheckError",
+    "CheckResult",
+    "Checklist",
     "CircularReferenceError",
     "ComputedLine",
     "Expr",

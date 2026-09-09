@@ -6,9 +6,9 @@ balance sheet, with a safe formula evaluator instead of `eval()`.
 ## Status
 
 Pre-alpha. Statements can be declared and validated, formulas parse and
-evaluate, a single period computes with per-line rounding, and twelve months
-roll into quarters and a year with balances carried across the boundaries;
-rendering is not implemented yet.
+evaluate, a single period computes with per-line rounding, twelve months roll
+into quarters and a year with balances carried across the boundaries, and
+checks state what the numbers must agree on; rendering is not implemented yet.
 
 ## Installation
 
@@ -260,6 +260,72 @@ print(results.proofs("2026")[0])
 
 all(proof.ok for proof in results.proofs())
 # True
+```
+
+## Does the statement hold together
+
+A signature cannot say that a balance sheet balances. A `Check` says it: two
+formulas that must agree over the same period, and the tolerance their
+difference may not exceed. A `Checklist` binds checks to a statement, so one
+that reads a line the statement does not have is refused there and then. A
+failing check names both numbers and the sides they came from.
+
+```python
+from decimal import Decimal
+from finmodel import (
+    Check, CheckError, Checklist, ComputedLine, InputLine, Rounding, Statement
+)
+
+sheet = Statement(
+    id="balance_sheet",
+    label="Balance sheet",
+    rounding=Rounding(2),
+    children=[
+        InputLine(id="cash", label="Cash"),
+        InputLine(id="receivables", label="Receivables"),
+        ComputedLine(id="total_assets", label="Total assets", formula="cash + receivables"),
+        InputLine(id="payables", label="Payables"),
+        InputLine(id="equity", label="Equity"),
+    ],
+)
+
+books = Checklist(
+    sheet,
+    [Check.balances(assets="total_assets", liabilities="payables", equity="equity")],
+)
+
+amounts = sheet.evaluate(
+    {
+        "cash": Decimal("400"),
+        "receivables": Decimal("800"),
+        "payables": Decimal("200"),
+        "equity": Decimal("950"),
+    }
+)
+
+print(books.run(amounts)[0])
+# Balance sheet balances: total_assets 1200.00 vs payables + equity 1150.00 (off by 50.00)
+
+try:
+    books.verify(amounts)
+except CheckError as error:
+    error.result.left, error.result.right, error.result.difference
+    # (Decimal('1200.00'), Decimal('1150.00'), Decimal('50.00'))
+```
+
+`Check.balances` and `Check.reconciles` name the two familiar ones — assets
+against what funds them, and the cash line of a balance sheet against what the
+cash flow closes at — but a check is only two formulas, so any identity a model
+leans on can be stated. A tolerance leaves room for stated rounding drift and
+nothing more; a side that is `NotApplicable` never holds.
+
+`run` reports, `verify` refuses with a `CheckError` carrying the result, and
+`verify_periods` walks a computed timeline — every month, every quarter and the
+year — so a rollup that stops balancing is named with the period it broke in.
+
+```python
+checked = books.verify_periods(results)
+checked["2026-Q1"]
 ```
 
 ## Development
