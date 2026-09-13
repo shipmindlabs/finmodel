@@ -1,0 +1,32 @@
+{
+  "statement": "balance_sheet",
+  "as_of": "2026",
+  "inputs": {
+    "cash": "7580",
+    "receivables": "1200",
+    "inventory": "420",
+    "equipment": "3000",
+    "accumulated_depreciation": "-800",
+    "payables": "900",
+    "deferred_revenue": "1500",
+    "share_capital": "5000",
+    "retained_earnings": "4000"
+  },
+  "expected": {
+    "cash": "7580.00",
+    "receivables": "1200.00",
+    "inventory": "420.00",
+    "total_current_assets": "9200.00",
+    "equipment": "3000.00",
+    "accumulated_depreciation": "-800.00",
+    "net_fixed_assets": "2200.00",
+    "total_assets": "11400.00",
+    "payables": "900.00",
+    "deferred_revenue": "1500.00",
+    "total_liabilities": "2400.00",
+    "share_capital": "5000.00",
+    "retained_earnings": "4000.00",
+    "total_equity": "9000.00",
+    "total_liabilities_and_equity": "11400.00"
+  }
+}

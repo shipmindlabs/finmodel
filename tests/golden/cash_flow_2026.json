@@ -1,0 +1,38 @@
+{
+  "statement": "cash_flow",
+  "year": 2026,
+  "opening": {"opening_cash": "500"},
+  "months": {
+    "2026-01": {"receipts": "100", "payments": "60"},
+    "2026-02": {"receipts": "200", "payments": "60"},
+    "2026-03": {"receipts": "300", "payments": "60"},
+    "2026-04": {"receipts": "400", "payments": "60"},
+    "2026-05": {"receipts": "500", "payments": "60"},
+    "2026-06": {"receipts": "600", "payments": "60"},
+    "2026-07": {"receipts": "700", "payments": "60"},
+    "2026-08": {"receipts": "800", "payments": "60"},
+    "2026-09": {"receipts": "900", "payments": "60"},
+    "2026-10": {"receipts": "1000", "payments": "60"},
+    "2026-11": {"receipts": "1100", "payments": "60"},
+    "2026-12": {"receipts": "1200", "payments": "60"}
+  },
+  "expected": {
+    "2026-01": {"opening_cash": "500.00", "receipts": "100.00", "payments": "60.00", "net_cash_flow": "40.00", "closing_cash": "540.00"},
+    "2026-02": {"opening_cash": "540.00", "receipts": "200.00", "payments": "60.00", "net_cash_flow": "140.00", "closing_cash": "680.00"},
+    "2026-03": {"opening_cash": "680.00", "receipts": "300.00", "payments": "60.00", "net_cash_flow": "240.00", "closing_cash": "920.00"},
+    "2026-04": {"opening_cash": "920.00", "receipts": "400.00", "payments": "60.00", "net_cash_flow": "340.00", "closing_cash": "1260.00"},
+    "2026-05": {"opening_cash": "1260.00", "receipts": "500.00", "payments": "60.00", "net_cash_flow": "440.00", "closing_cash": "1700.00"},
+    "2026-06": {"opening_cash": "1700.00", "receipts": "600.00", "payments": "60.00", "net_cash_flow": "540.00", "closing_cash": "2240.00"},
+    "2026-07": {"opening_cash": "2240.00", "receipts": "700.00", "payments": "60.00", "net_cash_flow": "640.00", "closing_cash": "2880.00"},
+    "2026-08": {"opening_cash": "2880.00", "receipts": "800.00", "payments": "60.00", "net_cash_flow": "740.00", "closing_cash": "3620.00"},
+    "2026-09": {"opening_cash": "3620.00", "receipts": "900.00", "payments": "60.00", "net_cash_flow": "840.00", "closing_cash": "4460.00"},
+    "2026-10": {"opening_cash": "4460.00", "receipts": "1000.00", "payments": "60.00", "net_cash_flow": "940.00", "closing_cash": "5400.00"},
+    "2026-11": {"opening_cash": "5400.00", "receipts": "1100.00", "payments": "60.00", "net_cash_flow": "1040.00", "closing_cash": "6440.00"},
+    "2026-12": {"opening_cash": "6440.00", "receipts": "1200.00", "payments": "60.00", "net_cash_flow": "1140.00", "closing_cash": "7580.00"},
+    "2026-Q1": {"opening_cash": "500.00", "receipts": "600.00", "payments": "180.00", "net_cash_flow": "420.00", "closing_cash": "920.00"},
+    "2026-Q2": {"opening_cash": "920.00", "receipts": "1500.00", "payments": "180.00", "net_cash_flow": "1320.00", "closing_cash": "2240.00"},
+    "2026-Q3": {"opening_cash": "2240.00", "receipts": "2400.00", "payments": "180.00", "net_cash_flow": "2220.00", "closing_cash": "4460.00"},
+    "2026-Q4": {"opening_cash": "4460.00", "receipts": "3300.00", "payments": "180.00", "net_cash_flow": "3120.00", "closing_cash": "7580.00"},
+    "2026": {"opening_cash": "500.00", "receipts": "7800.00", "payments": "720.00", "net_cash_flow": "7080.00", "closing_cash": "7580.00"}
+  }
+}

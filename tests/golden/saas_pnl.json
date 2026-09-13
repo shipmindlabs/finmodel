@@ -1,0 +1,89 @@
+{
+  "statement": "saas_pnl",
+  "cases": [
+    {
+      "name": "a profitable year",
+      "inputs": {
+        "subscriptions": "800000",
+        "services": "200000",
+        "hosting": "150000",
+        "support": "50000",
+        "sales_and_marketing": "300000",
+        "research_and_development": "250000",
+        "general_and_administrative": "150000"
+      },
+      "expected": {
+        "subscriptions": "800000.00",
+        "services": "200000.00",
+        "total_revenue": "1000000.00",
+        "hosting": "150000.00",
+        "support": "50000.00",
+        "total_cost_of_revenue": "200000.00",
+        "gross_profit": "800000.00",
+        "gross_margin": "0.8000",
+        "sales_and_marketing": "300000.00",
+        "research_and_development": "250000.00",
+        "general_and_administrative": "150000.00",
+        "total_operating_expenses": "700000.00",
+        "operating_income": "100000.00",
+        "operating_margin": "0.1000"
+      }
+    },
+    {
+      "name": "a pre-revenue year",
+      "inputs": {
+        "subscriptions": "0",
+        "services": "0",
+        "hosting": "0",
+        "support": "0",
+        "sales_and_marketing": "120000",
+        "research_and_development": "300000",
+        "general_and_administrative": "80000"
+      },
+      "expected": {
+        "subscriptions": "0.00",
+        "services": "0.00",
+        "total_revenue": "0.00",
+        "hosting": "0.00",
+        "support": "0.00",
+        "total_cost_of_revenue": "0.00",
+        "gross_profit": "0.00",
+        "gross_margin": "n/a (division by zero)",
+        "sales_and_marketing": "120000.00",
+        "research_and_development": "300000.00",
+        "general_and_administrative": "80000.00",
+        "total_operating_expenses": "500000.00",
+        "operating_income": "-500000.00",
+        "operating_margin": "n/a (division by zero)"
+      }
+    },
+    {
+      "name": "rounding stated line by line",
+      "inputs": {
+        "subscriptions": "299999.995",
+        "services": "0.004",
+        "hosting": "99999.996",
+        "support": "0.004",
+        "sales_and_marketing": "50000.005",
+        "research_and_development": "0.0049",
+        "general_and_administrative": "49999.985"
+      },
+      "expected": {
+        "subscriptions": "300000.00",
+        "services": "0.00",
+        "total_revenue": "300000.00",
+        "hosting": "100000.00",
+        "support": "0.00",
+        "total_cost_of_revenue": "100000.00",
+        "gross_profit": "200000.00",
+        "gross_margin": "0.6667",
+        "sales_and_marketing": "50000.01",
+        "research_and_development": "0.00",
+        "general_and_administrative": "49999.99",
+        "total_operating_expenses": "100000.00",
+        "operating_income": "100000.00",
+        "operating_margin": "0.3333"
+      }
+    }
+  ]
+}
