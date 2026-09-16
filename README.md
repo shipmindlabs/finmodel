@@ -16,12 +16,40 @@ checks state what the numbers must agree on; rendering is not implemented yet.
 pip install finmodel
 ```
 
-## Declaring a statement
+## Financial models as data, not spreadsheets
 
-A statement is data: blocks group categories, input lines carry values and
-computed lines derive them from a formula. Building a `Statement` validates the
-whole tree — identifiers, duplicates, formula syntax, unknown references and
-reference cycles.
+A spreadsheet keeps the model in its cells. The formula lives where the number
+is shown, a reference is a coordinate rather than a name, and a year is twelve
+copies of the same arithmetic side by side. The file cannot answer what gross
+margin depends on, cannot say that a row was inserted through the middle of a
+range, and cannot be reviewed except one cell at a time.
+
+finmodel keeps the model in data. A statement is a tree of frozen dataclasses:
+blocks group categories, input lines take values per period, computed lines
+carry a formula that names other lines by id. Constructing the tree validates
+it — identifiers, duplicates, formula syntax, unknown references, cycles — and
+parses every formula once, so the dependency graph and the order the lines must
+be evaluated in are known before a single number is supplied. The twelve months
+of a year are that one spec evaluated twelve times, not twelve copies of it.
+
+There is no file format of its own. A spec is ordinary Python objects, so
+loading one from JSON, YAML or a database is a loader you write, and a loaded
+spec is validated exactly like a hand-written one.
+
+## The spec format
+
+A statement is a root node over three kinds of child.
+
+| Node | What it is | Carries |
+| --- | --- | --- |
+| `Block` | a named group of lines and nested blocks | `id`, `label`, `children` |
+| `InputLine` | a row whose values are supplied per period | `id`, `label`, `rounding`, `unit` |
+| `ComputedLine` | a row derived from other lines | `id`, `label`, `rounding`, `formula` |
+| `Statement` | the root that computes and validates | `id`, `label`, `children`, `rounding` |
+
+Nesting is for reading, not for scope. Ids are flat across the whole statement,
+so a formula in one block may name a line in another, and a duplicate id is
+refused wherever it appears.
 
 ```python
 from finmodel import Block, ComputedLine, InputLine, Statement
@@ -63,6 +91,28 @@ for node, depth in pnl.walk():
     print("  " * depth + node.label)
 ```
 
+What construction refuses, and the `SpecError` it refuses with:
+
+| The spec says | The error reads |
+| --- | --- |
+| an id that is not an identifier | `line id must be an identifier, got 'total revenue'` |
+| the same id twice | `duplicate id 'services'` |
+| a blank label | `label of 'cogs' must not be empty` |
+| an empty block or statement | `block 'revenue' must contain at least one child` |
+| a computed line with no formula | `computed line 'gross_profit' must have a formula` |
+| a formula outside the grammar | `formula of 'gross_profit' is invalid: ...` |
+| a reference to nothing | `line 'gross_profit' references unknown line 'cgos'` |
+| a reference to a block | `line 'x' references block 'revenue'; formulas may only reference lines` |
+| lines that depend on one another | `circular reference: ebit -> ebitda -> ebit` |
+
+A built statement answers questions about itself: `lines`, `input_lines`,
+`computed_lines` and `walk()` for the shape, `line(id)` for one row,
+`rounding_of(id)` for the scale it will state its amounts at, and
+`dependency_graph` for the edges between them. Every `ComputedLine` carries
+its parsed tree as `line.expression` and the ids it reads as
+`line.references`; `formula_references(formula)` answers the same question for
+a formula that is not attached to a line yet.
+
 ## Evaluation order
 
 `evaluation_order` is a topological sort of the computed lines over the graph of
@@ -97,13 +147,30 @@ except CircularReferenceError as error:
 `CircularReferenceError` is a `SpecError`, so callers that only care about an
 invalid spec can keep catching the base class.
 
-## Formulas
+## The formula grammar
 
-Formulas are never handed to `eval()`. A formula is tokenised and parsed into a
-small expression tree — line references, decimal literals, `+ - * /`, a unary
-sign and parentheses — and then evaluated over an explicit scope. Anything
-outside that grammar (calls, attribute access, comparisons) is a parse error,
-and a name that the scope does not bind is an evaluation error.
+A formula is tokenised and parsed by recursive descent into a small expression
+tree, then evaluated over an explicit scope. The whole language is four
+productions:
+
+```
+expression = sum
+sum        = product (( "+" | "-" ) product)*
+product    = signed (( "*" | "/" ) signed)*
+signed     = ( "+" | "-" ) signed | atom
+atom       = number | name | "(" sum ")"
+
+number     = digits [ "." [ digits ] ] | "." digits
+name       = [A-Za-z_][A-Za-z0-9_]*
+```
+
+Products bind tighter than sums, both group from the left, a sign may be
+repeated, and whitespace between tokens is not part of the formula. A `name` is
+a reference to another line of the same statement, read from the scope at
+evaluation time; a `number` becomes an exact `Decimal` literal.
+
+The tree is four node types — `Number`, `Reference`, `UnaryOp`, `BinaryOp` —
+each frozen, each answering `references` and `evaluate(scope)`.
 
 ```python
 from decimal import Decimal
@@ -123,8 +190,52 @@ expression.evaluate(
 # Decimal('900.0')
 ```
 
-Every `ComputedLine` exposes its parsed tree as `line.expression`, so a
-statement is parsed once at construction and evaluated many times.
+Everything else is a `FormulaError` that names the position it gave up at:
+
+| The formula says | The error reads |
+| --- | --- |
+| `cogs > 0` | `unexpected character '>' at position 5` |
+| `revenue.upper()` | `unexpected character '.' at position 7` |
+| `SUM(a:b)` | `unexpected character ':' at position 5` |
+| `2 ** 3` | `unexpected '*' at position 3` |
+| `revenue if revenue else 0` | `unexpected 'if' at position 8` |
+| `(total_revenue - cogs` | `expected ')' at position 21` |
+| `revenue -` | `unexpected end of formula` |
+
+A name the scope does not bind is a `FormulaError` too — `unbound reference
+'cgos'` — but inside a statement it never gets that far: references are
+resolved against the lines when the statement is built.
+
+## Why `eval()` is not an option
+
+The obvious implementation of a formula language in Python is one line:
+`eval(formula, {"__builtins__": {}}, scope)`. It is not used here, for four
+reasons, and only the first is about security.
+
+**A spec is input.** Hand-written today, loaded from a file or a form
+tomorrow — and `eval` over a string reaches the whole interpreter through
+attribute access on any object it can see, whatever the namespace was emptied
+of. Sandboxing it is a game that has been lost repeatedly. A grammar with no
+calls, no attributes and no subscripts has nothing to escape from.
+
+**Parsing is what gives you the references.** `evaluation_order`,
+`dependency_graph`, the cycle error and the refusal of an unknown line all come
+from walking the tree before any value exists. `eval` reports a missing name
+only when the line is computed, only one at a time, and cannot be asked what a
+formula depends on at all.
+
+**Python's arithmetic is not a statement's arithmetic.** Division by zero
+raises where a model wants to state that a margin is not applicable. A literal
+like `0.1` is binary floating point, and mixing it with a `Decimal` is a
+`TypeError` rather than an amount. Integer operands, `**`, `//` and comparison
+chaining all mean something in Python that a table of money should not have to
+inherit.
+
+**Errors land in the wrong place.** A `SyntaxError` over a fragment of a
+formula says nothing about which line carried it. Here the formula is parsed
+when the `ComputedLine` is constructed, so a malformed formula is a `SpecError`
+naming that line, at the moment the model is declared rather than the moment it
+is run.
 
 ## Money, rounding and division by zero
 
@@ -133,9 +244,10 @@ a scope are converted exactly — a float through its shortest repr — so nothi
 reaches the arithmetic as binary floating point.
 
 Rounding is stated, never implicit. A `Rounding` carries a number of decimal
-places and a mode, defaulting to `ROUND_HALF_UP` rather than the banker's
-rounding of the `decimal` module. Lines state their own; a statement may state
-a default for the lines that do not. Negative digits round to units of ten.
+places and a mode from the `decimal` module, defaulting to `ROUND_HALF_UP`
+rather than the banker's rounding of `decimal` itself. Lines state their own; a
+statement may state a default for the lines that do not. Negative digits round
+to units of ten.
 
 A division by zero is an answer, not a crash: it yields `NotApplicable`, which
 carries the reason and propagates through every line that reads it, so a period
@@ -315,9 +427,10 @@ except CheckError as error:
 
 `Check.balances` and `Check.reconciles` name the two familiar ones — assets
 against what funds them, and the cash line of a balance sheet against what the
-cash flow closes at — but a check is only two formulas, so any identity a model
-leans on can be stated. A tolerance leaves room for stated rounding drift and
-nothing more; a side that is `NotApplicable` never holds.
+cash flow closes at — but a check is only two formulas over the same grammar,
+so any identity a model leans on can be stated. A tolerance leaves room for
+stated rounding drift and nothing more; a side that is `NotApplicable` never
+holds.
 
 `run` reports, `verify` refuses with a `CheckError` carrying the result, and
 `verify_periods` walks a computed timeline — every month, every quarter and the
@@ -327,6 +440,19 @@ year — so a rollup that stops balancing is named with the period it broke in.
 checked = books.verify_periods(results)
 checked["2026-Q1"]
 ```
+
+## Errors
+
+| Error | Base | Raised when | Carries |
+| --- | --- | --- | --- |
+| `FormulaError` | `ValueError` | a formula is outside the grammar, or a name is unbound | the position it gave up at |
+| `SpecError` | `ValueError` | a spec is structurally invalid, or a period's values do not fit it | — |
+| `CircularReferenceError` | `SpecError` | computed lines depend on one another | `cycle` |
+| `IdentityError` | `SpecError` | closing is not opening plus movement | `proof` |
+| `CheckError` | `SpecError` | the two sides of a check disagree | `result`, `where` |
+
+A malformed formula inside a `ComputedLine` surfaces as a `SpecError` naming
+the line, with the `FormulaError` as its cause.
 
 ## Development
 
