@@ -26,6 +26,7 @@ from finmodel.periods import (
     Rollup,
     Timeline,
 )
+from finmodel.render import Row, Table, render_csv, render_markdown, tabulate
 from finmodel.spec import (
     Block,
     CircularReferenceError,
@@ -65,8 +66,10 @@ __all__ = [
     "Results",
     "Rollup",
     "Rounding",
+    "Row",
     "SpecError",
     "Statement",
+    "Table",
     "Timeline",
     "UnaryOp",
     "Value",
@@ -74,6 +77,9 @@ __all__ = [
     "evaluate",
     "formula_references",
     "parse",
+    "render_csv",
+    "render_markdown",
+    "tabulate",
 ]
 
 __version__ = "0.1.0"
