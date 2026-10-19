@@ -7,8 +7,9 @@ balance sheet, with a safe formula evaluator instead of `eval()`.
 
 Pre-alpha. Statements can be declared and validated, formulas parse and
 evaluate, a single period computes with per-line rounding, twelve months roll
-into quarters and a year with balances carried across the boundaries, and
-checks state what the numbers must agree on; rendering is not implemented yet.
+into quarters and a year with balances carried across the boundaries, checks
+state what the numbers must agree on, and a computed statement renders to one
+table model with Markdown and CSV writers over it.
 
 ## Installation
 
@@ -440,6 +441,136 @@ year — so a rollup that stops balancing is named with the period it broke in.
 checked = books.verify_periods(results)
 checked["2026-Q1"]
 ```
+
+## One table, two writers
+
+Numbers are shown from the spec that computed them. `tabulate` walks the
+statement in declaration order and returns a `Table`: block headers at their
+nesting depth, then the lines, with one column per period. `render_markdown`
+and `render_csv` write that single model, neither of them knowing anything
+about statements, so a third writer is a function over `Table.rows`.
+
+What goes in decides the columns. A `Results` becomes one column per period of
+its timeline, a mapping of period to amounts becomes those columns in the order
+given, and one period's amounts become a single column named `Amount`. The
+first header cell is the statement label.
+
+```python
+from decimal import Decimal
+from finmodel import (
+    Block,
+    ComputedLine,
+    InputLine,
+    Rounding,
+    Statement,
+    render_csv,
+    render_markdown,
+    tabulate,
+)
+
+statement = Statement(
+    id="pnl",
+    label="Profit and loss",
+    rounding=Rounding(2),
+    children=[
+        Block(
+            id="revenue",
+            label="Revenue",
+            children=[
+                InputLine(id="subscriptions", label="Subscriptions", unit="USD"),
+                InputLine(id="services", label="Services", unit="USD"),
+                ComputedLine(
+                    id="total_revenue",
+                    label="Total revenue",
+                    formula="subscriptions + services",
+                ),
+            ],
+        ),
+        InputLine(id="cogs", label="Cost of revenue", unit="USD"),
+        ComputedLine(
+            id="gross_profit",
+            label="Gross profit",
+            formula="total_revenue - cogs",
+        ),
+        ComputedLine(
+            id="gross_margin",
+            label="Gross margin",
+            formula="gross_profit / total_revenue",
+            rounding=Rounding(4),
+        ),
+    ],
+)
+
+amounts = statement.evaluate(
+    {
+        "subscriptions": Decimal("800000"),
+        "services": Decimal("200000"),
+        "cogs": Decimal("200000"),
+    }
+)
+
+print(render_markdown(tabulate(statement, amounts)))
+```
+
+```
+| Profit and loss       |     Amount |
+| :-------------------- | ---------: |
+| **Revenue**           |            |
+|   Subscriptions (USD) |  800000.00 |
+|   Services (USD)      |  200000.00 |
+|   Total revenue       | 1000000.00 |
+| Cost of revenue (USD) |  200000.00 |
+| Gross profit          |  800000.00 |
+| Gross margin          |     0.8000 |
+```
+
+Cells are text exactly as the amounts state themselves: a line rounded to two
+places prints two places, a line rounded to four prints four, and a
+`NotApplicable` prints its reason — `n/a (division by zero)` — rather than a
+blank that would read like a zero. A unit stated on an `InputLine` follows the
+label. A block header holds no amounts, and a pipe inside a label is escaped,
+so a label cannot break a row.
+
+CSV carries the ids, the depth and the unit beside the same cells, so a table
+written out can be read back into the rows it came from.
+
+```python
+print(render_csv(tabulate(statement, amounts)))
+```
+
+```
+id,label,depth,unit,Amount
+revenue,Revenue,0,,
+subscriptions,Subscriptions,1,USD,800000.00
+services,Services,1,USD,200000.00
+total_revenue,Total revenue,1,,1000000.00
+cogs,Cost of revenue,0,USD,200000.00
+gross_profit,Gross profit,0,,800000.00
+gross_margin,Gross margin,0,,0.8000
+```
+
+A computed timeline needs no extra work: hand the `Results` over for every
+period it holds, or a mapping of the periods wanted for a narrower table. A
+`Table` is also readable by id, so a report can pull one cell without parsing
+what it just wrote.
+
+```python
+table = tabulate(cash, results)
+table.columns
+# ('2026-01', '2026-02', ..., '2026-Q1', ..., '2026')
+table.amount("closing_cash", "2026-Q1")
+# Decimal('1480.00')
+table.row("closing_cash").cells[0]
+# '1060.00'
+
+quarters = tabulate(cash, {period: results[period] for period in timeline.quarters})
+quarters.columns
+# ('2026-Q1', '2026-Q2', '2026-Q3', '2026-Q4')
+```
+
+A column that has no amount for a line is a `SpecError` naming both, as is a
+mapping that mixes periods with amounts: a table is either complete or refused,
+the same way a period is.
 
 ## Errors
 
