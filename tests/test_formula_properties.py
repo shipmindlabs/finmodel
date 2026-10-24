@@ -4,8 +4,10 @@ import random
 import re
 from decimal import Decimal
 
+import pytest
+
 from finmodel import NA, FormulaError, NotApplicable, Rounding, evaluate, parse
-from finmodel.formula import to_amount
+from finmodel.formula import MAX_DEPTH, to_amount
 
 SEED = 20260913
 RUNS = 200
@@ -141,6 +143,53 @@ def test_arbitrary_text_is_refused_as_a_formula_error_or_not_at_all():
         except FormulaError:
             continue
         assert isinstance(amount, (Decimal, NotApplicable))
+
+
+def test_nesting_up_to_the_bound_is_parsed_and_evaluated():
+    nested = "(" * MAX_DEPTH + "1" + ")" * MAX_DEPTH
+    assert evaluate(nested, {}) == Decimal(1)
+    chain = " + ".join(["1"] * (MAX_DEPTH + 1))
+    assert evaluate(chain, {}) == Decimal(MAX_DEPTH + 1)
+
+
+def test_nesting_past_the_bound_is_a_formula_error():
+    deeper = [
+        "(" * (MAX_DEPTH + 1) + "1" + ")" * (MAX_DEPTH + 1),
+        "(" * 5000 + "1",
+        " + ".join(["1"] * (MAX_DEPTH + 2)),
+        "1" + " * 1" * (MAX_DEPTH + 1),
+        "-" * (MAX_DEPTH + 1) + "1",
+    ]
+    for text in deeper:
+        with pytest.raises(FormulaError, match="nests deeper than"):
+            parse(text)
+
+
+def test_a_value_that_is_not_finite_is_refused_by_its_line():
+    unusable = (
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        Decimal("NaN"),
+        Decimal("sNaN"),
+        Decimal("Infinity"),
+        Decimal("-Infinity"),
+        "nan",
+        "-Infinity",
+    )
+    for value in unusable:
+        with pytest.raises(FormulaError, match="'revenue' is not a finite number"):
+            to_amount(value, "revenue")
+        with pytest.raises(FormulaError, match="'revenue' is not a finite number"):
+            evaluate("revenue + 1", {"revenue": value})
+        with pytest.raises(FormulaError, match="'revenue' is not a finite number"):
+            Rounding(2).apply(to_amount(value, "revenue"))
+
+
+def test_numbers_and_names_are_ascii():
+    for text in ("\u0661\u0662", "1 + \u0662", "\u0663.5", "revenue\u0627"):
+        with pytest.raises(FormulaError, match="unexpected character"):
+            parse(text)
 
 
 def test_amounts_never_become_binary_floats():

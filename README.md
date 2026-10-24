@@ -207,6 +207,15 @@ A name the scope does not bind is a `FormulaError` too — `unbound reference
 'cgos'` — but inside a statement it never gets that far: references are
 resolved against the lines when the statement is built.
 
+Numbers and names are ASCII. A digit from another script is an unexpected
+character rather than a number, so what the tokeniser accepts is exactly what
+the grammar above writes down.
+
+Nesting is bounded. A formula may nest `MAX_DEPTH` levels — 128, counted over
+parentheses, a chain of operations and repeated signs alike — and one that
+nests deeper is a `FormulaError` naming the position it passed the bound at,
+rather than a `RecursionError` from inside the parser.
+
 ## Why `eval()` is not an option
 
 The obvious implementation of a formula language in Python is one line:
@@ -243,6 +252,11 @@ is run.
 Amounts are `Decimal` end to end. Integers, floats and strings handed in through
 a scope are converted exactly — a float through its shortest repr — so nothing
 reaches the arithmetic as binary floating point.
+
+A value that is not finite is refused where it enters. A NaN or an infinity
+arriving as a float, a string or a `Decimal` is a `FormulaError` naming the line
+that held it, instead of a rounding that fails late or a check comparison that
+raises `InvalidOperation` two layers away.
 
 Rounding is stated, never implicit. A `Rounding` carries a number of decimal
 places and a mode from the `decimal` module, defaulting to `ROUND_HALF_UP`
@@ -576,7 +590,7 @@ the same way a period is.
 
 | Error | Base | Raised when | Carries |
 | --- | --- | --- | --- |
-| `FormulaError` | `ValueError` | a formula is outside the grammar, or a name is unbound | the position it gave up at |
+| `FormulaError` | `ValueError` | a formula is outside the grammar or nests too deep, a name is unbound, or a value is not a finite number | the position it gave up at |
 | `SpecError` | `ValueError` | a spec is structurally invalid, or a period's values do not fit it | — |
 | `CircularReferenceError` | `SpecError` | computed lines depend on one another | `cycle` |
 | `IdentityError` | `SpecError` | closing is not opening plus movement | `proof` |

@@ -20,6 +20,7 @@ from decimal import (
 from typing import Union
 
 __all__ = [
+    "MAX_DEPTH",
     "NA",
     "Amount",
     "BinaryOp",
@@ -35,6 +36,10 @@ __all__ = [
     "parse",
     "to_amount",
 ]
+
+# Past this depth the parser and the evaluator would reach the interpreter's own
+# recursion limit, so the grammar states a bound it can refuse by.
+MAX_DEPTH = 128
 
 
 class FormulaError(ValueError):
@@ -100,17 +105,26 @@ class Rounding:
 
 
 def to_amount(value: Value, name: str) -> Amount:
-    """Coerce a scope value to an exact amount, or to the non-answer it already is."""
-    if isinstance(value, (Decimal, NotApplicable)):
+    """Coerce a scope value to an exact finite amount, or to the non-answer it is."""
+    if isinstance(value, NotApplicable):
         return value
+    if isinstance(value, Decimal):
+        return _finite(value, value, name)
     if isinstance(value, int) and not isinstance(value, bool):
         return Decimal(value)
     if isinstance(value, (float, str)):
         try:
-            return Decimal(str(value))
+            amount = Decimal(str(value))
         except DecimalException:
             raise FormulaError(f"value of {name!r} is not a number: {value!r}") from None
+        return _finite(amount, value, name)
     raise FormulaError(f"value of {name!r} is not a number: {value!r}")
+
+
+def _finite(amount: Decimal, value: Value, name: str) -> Decimal:
+    if not amount.is_finite():
+        raise FormulaError(f"value of {name!r} is not a finite number: {value!r}")
+    return amount
 
 
 @dataclass(frozen=True)
@@ -221,7 +235,8 @@ class _Token:
 _TOKEN_RE = re.compile(
     r"(?P<number>\d+(?:\.\d*)?|\.\d+)"
     r"|(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
-    r"|(?P<op>[-+*/()])"
+    r"|(?P<op>[-+*/()])",
+    re.ASCII,
 )
 
 
@@ -251,7 +266,7 @@ class _Parser:
         self._position = 0
 
     def parse(self) -> Expr:
-        expression = self._sum()
+        expression = self._sum(0)
         token = self._current
         if token.kind != "end":
             raise FormulaError(f"unexpected {token.text!r} at position {token.position}")
@@ -270,27 +285,39 @@ class _Parser:
         token = self._current
         return token.kind == "op" and token.text in operators
 
-    def _sum(self) -> Expr:
-        node = self._product()
+    def _deeper(self, depth: int) -> int:
+        if depth >= MAX_DEPTH:
+            token = self._current
+            raise FormulaError(
+                f"formula nests deeper than {MAX_DEPTH} levels "
+                f"at position {token.position}"
+            )
+        return depth + 1
+
+    def _sum(self, depth: int) -> Expr:
+        node = self._product(depth)
         while self._at_operator("+-"):
+            depth = self._deeper(depth)
             op = self._advance().text
-            node = BinaryOp(op, node, self._product())
+            node = BinaryOp(op, node, self._product(depth))
         return node
 
-    def _product(self) -> Expr:
-        node = self._signed()
+    def _product(self, depth: int) -> Expr:
+        node = self._signed(depth)
         while self._at_operator("*/"):
+            depth = self._deeper(depth)
             op = self._advance().text
-            node = BinaryOp(op, node, self._signed())
+            node = BinaryOp(op, node, self._signed(depth))
         return node
 
-    def _signed(self) -> Expr:
+    def _signed(self, depth: int) -> Expr:
         if self._at_operator("+-"):
+            deeper = self._deeper(depth)
             op = self._advance().text
-            return UnaryOp(op, self._signed())
-        return self._atom()
+            return UnaryOp(op, self._signed(deeper))
+        return self._atom(depth)
 
-    def _atom(self) -> Expr:
+    def _atom(self, depth: int) -> Expr:
         token = self._advance()
         if token.kind == "number":
             try:
@@ -302,7 +329,7 @@ class _Parser:
         if token.kind == "name":
             return Reference(token.text)
         if token.kind == "op" and token.text == "(":
-            node = self._sum()
+            node = self._sum(self._deeper(depth))
             closing = self._advance()
             if closing.kind != "op" or closing.text != ")":
                 raise FormulaError(f"expected ')' at position {closing.position}")
