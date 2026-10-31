@@ -2,11 +2,14 @@
 
 from finmodel.checks import Check, CheckError, CheckResult, Checklist
 from finmodel.formula import (
+    FUNCTIONS,
     NA,
     Amount,
     BinaryOp,
+    Call,
     Expr,
     FormulaError,
+    Function,
     NotApplicable,
     Number,
     Reference,
@@ -40,10 +43,12 @@ from finmodel.spec import (
 )
 
 __all__ = [
+    "FUNCTIONS",
     "NA",
     "Amount",
     "BinaryOp",
     "Block",
+    "Call",
     "Carry",
     "Check",
     "CheckError",
@@ -53,6 +58,7 @@ __all__ = [
     "ComputedLine",
     "Expr",
     "FormulaError",
+    "Function",
     "IdentityError",
     "InputLine",
     "Line",

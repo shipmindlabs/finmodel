@@ -1,10 +1,10 @@
-"""A formula language for computed lines: references, four operations, parentheses."""
+"""A formula language for computed lines: references, four operations, calls."""
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from decimal import (
     ROUND_CEILING,
     ROUND_DOWN,
@@ -17,15 +17,19 @@ from decimal import (
     DecimalException,
     InvalidOperation,
 )
+from types import MappingProxyType
 from typing import Union
 
 __all__ = [
+    "FUNCTIONS",
     "MAX_DEPTH",
     "NA",
     "Amount",
     "BinaryOp",
+    "Call",
     "Expr",
     "FormulaError",
+    "Function",
     "NotApplicable",
     "Number",
     "Reference",
@@ -207,7 +211,90 @@ class BinaryOp:
         return left / right
 
 
-Expr = Union[Number, Reference, UnaryOp, BinaryOp]
+@dataclass(frozen=True)
+class Function:
+    """One entry of the closed table of functions a formula may call."""
+
+    name: str
+    minimum: int
+    variadic: bool
+    apply: Callable[[Sequence[Decimal]], Decimal] = field(compare=False, repr=False)
+
+    def accepts(self, count: int) -> bool:
+        """Whether the function takes that many arguments."""
+        return count >= self.minimum if self.variadic else count == self.minimum
+
+    @property
+    def arity(self) -> str:
+        """The number of arguments it takes, as an error states it."""
+        if self.variadic:
+            return f"at least {self.minimum} arguments"
+        plural = "" if self.minimum == 1 else "s"
+        return f"exactly {self.minimum} argument{plural}"
+
+
+FUNCTIONS: Mapping[str, Function] = MappingProxyType(
+    {
+        function.name: function
+        for function in (
+            Function("abs", 1, False, lambda values: abs(values[0])),
+            Function("max", 2, True, max),
+            Function("min", 2, True, min),
+        )
+    }
+)
+
+
+def _at(position: int | None) -> str:
+    return "" if position is None else f" at position {position}"
+
+
+def _resolve(name: str, position: int | None = None) -> Function:
+    try:
+        return FUNCTIONS[name]
+    except KeyError:
+        raise FormulaError(f"unknown function {name!r}{_at(position)}") from None
+
+
+def _check_arity(function: Function, count: int, position: int | None = None) -> None:
+    if not function.accepts(count):
+        raise FormulaError(
+            f"{function.name} takes {function.arity}, got {count}{_at(position)}"
+        )
+
+
+@dataclass(frozen=True)
+class Call:
+    """A call of one function of the table, over the arguments it was given."""
+
+    name: str
+    arguments: tuple["Expr", ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "arguments", tuple(self.arguments))
+        _check_arity(_resolve(self.name), len(self.arguments))
+
+    @property
+    def function(self) -> Function:
+        return FUNCTIONS[self.name]
+
+    @property
+    def references(self) -> tuple[str, ...]:
+        return _dedupe(
+            name for argument in self.arguments for name in argument.references
+        )
+
+    def evaluate(self, scope: Scope) -> Amount:
+        values: list[Decimal] = []
+        for argument in self.arguments:
+            value = argument.evaluate(scope)
+            if isinstance(value, NotApplicable):
+                return value
+            values.append(value)
+        return self.function.apply(values)
+
+
+Expr = Union[Number, Reference, UnaryOp, BinaryOp, Call]
 
 
 def parse(formula: str) -> Expr:
@@ -235,7 +322,7 @@ class _Token:
 _TOKEN_RE = re.compile(
     r"(?P<number>\d+(?:\.\d*)?|\.\d+)"
     r"|(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
-    r"|(?P<op>[-+*/()])",
+    r"|(?P<op>[-+*/(),])",
     re.ASCII,
 )
 
@@ -259,7 +346,7 @@ def _tokenize(formula: str) -> list[_Token]:
 
 
 class _Parser:
-    """Recursive descent over the grammar of sums, products and atoms."""
+    """Recursive descent over the grammar of sums, products, calls and atoms."""
 
     def __init__(self, tokens: list[_Token]) -> None:
         self._tokens = tokens
@@ -327,6 +414,13 @@ class _Parser:
                     f"invalid number {token.text!r} at position {token.position}"
                 ) from None
         if token.kind == "name":
+            if self._at_operator("("):
+                return self._call(token, depth)
+            if token.text in FUNCTIONS:
+                raise FormulaError(
+                    f"function {token.text!r} is not a line reference "
+                    f"at position {token.position}"
+                )
             return Reference(token.text)
         if token.kind == "op" and token.text == "(":
             node = self._sum(self._deeper(depth))
@@ -337,3 +431,19 @@ class _Parser:
         if token.kind == "end":
             raise FormulaError("unexpected end of formula")
         raise FormulaError(f"unexpected {token.text!r} at position {token.position}")
+
+    def _call(self, name: _Token, depth: int) -> Expr:
+        function = _resolve(name.text, name.position)
+        deeper = self._deeper(depth)
+        self._advance()
+        arguments: list[Expr] = []
+        if not self._at_operator(")"):
+            arguments.append(self._sum(deeper))
+            while self._at_operator(","):
+                self._advance()
+                arguments.append(self._sum(deeper))
+        closing = self._advance()
+        if closing.kind != "op" or closing.text != ")":
+            raise FormulaError(f"expected ')' at position {closing.position}")
+        _check_arity(function, len(arguments), name.position)
+        return Call(function.name, tuple(arguments))

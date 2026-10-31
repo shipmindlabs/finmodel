@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Union
 
 from finmodel.formula import (
+    FUNCTIONS,
     Amount,
     Expr,
     FormulaError,
@@ -53,6 +54,8 @@ def formula_references(formula: str) -> tuple[str, ...]:
 def _validate_id(value: str, kind: str) -> None:
     if not _ID_RE.match(value):
         raise SpecError(f"{kind} id must be an identifier, got {value!r}")
+    if value in FUNCTIONS:
+        raise SpecError(f"{kind} id {value!r} is a function name of the grammar")
 
 
 def _validate_label(value: str, node_id: str) -> None:
