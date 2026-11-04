@@ -6,10 +6,11 @@ balance sheet, with a safe formula evaluator instead of `eval()`.
 ## Status
 
 Pre-alpha. Statements can be declared and validated, formulas parse and
-evaluate, a single period computes with per-line rounding, twelve months roll
-into quarters and a year with balances carried across the boundaries, checks
-state what the numbers must agree on, and a computed statement renders to one
-table model with Markdown and CSV writers over it.
+evaluate over a closed table of functions, a single period computes with
+per-line rounding, twelve months roll into quarters and a year with balances
+carried across the boundaries, checks state what the numbers must agree on, and
+a computed statement renders to one table model with Markdown and CSV writers
+over it.
 
 ## Installation
 
@@ -97,6 +98,7 @@ What construction refuses, and the `SpecError` it refuses with:
 | The spec says | The error reads |
 | --- | --- |
 | an id that is not an identifier | `line id must be an identifier, got 'total revenue'` |
+| an id the grammar already uses | `line id 'min' is a function name of the grammar` |
 | the same id twice | `duplicate id 'services'` |
 | a blank label | `label of 'cogs' must not be empty` |
 | an empty block or statement | `block 'revenue' must contain at least one child` |
@@ -151,7 +153,7 @@ invalid spec can keep catching the base class.
 ## The formula grammar
 
 A formula is tokenised and parsed by recursive descent into a small expression
-tree, then evaluated over an explicit scope. The whole language is four
+tree, then evaluated over an explicit scope. The whole language is five
 productions:
 
 ```
@@ -159,8 +161,10 @@ expression = sum
 sum        = product (( "+" | "-" ) product)*
 product    = signed (( "*" | "/" ) signed)*
 signed     = ( "+" | "-" ) signed | atom
-atom       = number | name | "(" sum ")"
+atom       = number | call | name | "(" sum ")"
+call       = function "(" sum ( "," sum )* ")"
 
+function   = "abs" | "max" | "min"
 number     = digits [ "." [ digits ] ] | "." digits
 name       = [A-Za-z_][A-Za-z0-9_]*
 ```
@@ -168,10 +172,11 @@ name       = [A-Za-z_][A-Za-z0-9_]*
 Products bind tighter than sums, both group from the left, a sign may be
 repeated, and whitespace between tokens is not part of the formula. A `name` is
 a reference to another line of the same statement, read from the scope at
-evaluation time; a `number` becomes an exact `Decimal` literal.
+evaluation time; a `number` becomes an exact `Decimal` literal; a `call` names
+one function of the closed table below, and nothing else is callable.
 
-The tree is four node types — `Number`, `Reference`, `UnaryOp`, `BinaryOp` —
-each frozen, each answering `references` and `evaluate(scope)`.
+The tree is five node types — `Number`, `Reference`, `UnaryOp`, `BinaryOp`,
+`Call` — each frozen, each answering `references` and `evaluate(scope)`.
 
 ```python
 from decimal import Decimal
@@ -202,6 +207,9 @@ Everything else is a `FormulaError` that names the position it gave up at:
 | `revenue if revenue else 0` | `unexpected 'if' at position 8` |
 | `(total_revenue - cogs` | `expected ')' at position 21` |
 | `revenue -` | `unexpected end of formula` |
+| `sum(a, b)` | `unknown function 'sum' at position 0` |
+| `min(revenue)` | `min takes at least 2 arguments, got 1 at position 0` |
+| `max` | `function 'max' is not a line reference at position 0` |
 
 A name the scope does not bind is a `FormulaError` too — `unbound reference
 'cgos'` — but inside a statement it never gets that far: references are
@@ -212,9 +220,52 @@ character rather than a number, so what the tokeniser accepts is exactly what
 the grammar above writes down.
 
 Nesting is bounded. A formula may nest `MAX_DEPTH` levels — 128, counted over
-parentheses, a chain of operations and repeated signs alike — and one that
-nests deeper is a `FormulaError` naming the position it passed the bound at,
-rather than a `RecursionError` from inside the parser.
+parentheses, a chain of operations, repeated signs and calls alike — and one
+that nests deeper is a `FormulaError` naming the position it passed the bound
+at, rather than a `RecursionError` from inside the parser.
+
+## A closed table of functions
+
+A formula may call a function, but only one the grammar itself names. `FUNCTIONS`
+is that table, read-only, and three entries long.
+
+| Call | Takes | Answers |
+| --- | --- | --- |
+| `abs(x)` | exactly 1 argument | the magnitude of its argument |
+| `max(a, b, ...)` | at least 2 arguments | the greatest of its arguments |
+| `min(a, b, ...)` | at least 2 arguments | the least of its arguments |
+
+A call is an atom: it takes a sign, multiplies, nests inside another call and
+counts against the depth bound like a parenthesis. The number of arguments is
+checked when the formula is parsed — not when a period is computed — and the
+error names the position the function name stood at. Arguments are evaluated
+left to right and the first `NotApplicable` is the answer of the whole call,
+exactly as a non-answer propagates through an operation, so a function is never
+handed one as a number.
+
+```python
+from decimal import Decimal
+from finmodel import FUNCTIONS, evaluate, parse
+
+sorted(FUNCTIONS)
+# ['abs', 'max', 'min']
+
+evaluate("max(profit, 0) * 0.25", {"profit": Decimal("400")})
+# Decimal('100.00')
+evaluate("abs(min(profit, 0))", {"profit": Decimal("-500")})
+# Decimal('500')
+evaluate("abs(profit / revenue)", {"profit": Decimal("90"), "revenue": Decimal("0")})
+# NotApplicable(reason='division by zero')
+
+parse("min(revenue, cogs, 0)").references
+# ('revenue', 'cogs')
+```
+
+A function name belongs to the grammar, never to a statement. `max` standing on
+its own is a `FormulaError` rather than a reference, and a line or block whose
+id is `min`, `max` or `abs` is refused when it is constructed — a formula could
+not tell the two apart. Names are case-sensitive, so `ABS(a)` is an unknown
+function rather than `abs`.
 
 ## Why `eval()` is not an option
 
@@ -225,8 +276,9 @@ reasons, and only the first is about security.
 **A spec is input.** Hand-written today, loaded from a file or a form
 tomorrow — and `eval` over a string reaches the whole interpreter through
 attribute access on any object it can see, whatever the namespace was emptied
-of. Sandboxing it is a game that has been lost repeatedly. A grammar with no
-calls, no attributes and no subscripts has nothing to escape from.
+of. Sandboxing it is a game that has been lost repeatedly. A grammar whose only
+calls are the three functions it names, with no attributes and no subscripts,
+has nothing to escape from.
 
 **Parsing is what gives you the references.** `evaluation_order`,
 `dependency_graph`, the cycle error and the refusal of an unknown line all come
@@ -590,7 +642,7 @@ the same way a period is.
 
 | Error | Base | Raised when | Carries |
 | --- | --- | --- | --- |
-| `FormulaError` | `ValueError` | a formula is outside the grammar or nests too deep, a name is unbound, or a value is not a finite number | the position it gave up at |
+| `FormulaError` | `ValueError` | a formula is outside the grammar or nests too deep, a call names a function the table does not hold or takes the wrong number of arguments, a name is unbound, or a value is not a finite number | the position it gave up at |
 | `SpecError` | `ValueError` | a spec is structurally invalid, or a period's values do not fit it | — |
 | `CircularReferenceError` | `SpecError` | computed lines depend on one another | `cycle` |
 | `IdentityError` | `SpecError` | closing is not opening plus movement | `proof` |
